@@ -26,8 +26,8 @@ public class CompositeListener<Params extends Copyable<Params>> implements Trave
     }
 
     @Override
-    public void onNewParameters(Params newParams) {
-        components.stream().forEach(c -> c.onNewParameters(newParams));
+    public void onGradingParameters(Params newParams) {
+        components.stream().forEach(c -> c.onGradingParameters(newParams));
     }
 
     @Override
