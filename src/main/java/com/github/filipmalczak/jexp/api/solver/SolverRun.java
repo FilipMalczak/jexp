@@ -7,6 +7,6 @@ import org.apiguardian.api.API;
 import java.util.Collection;
 
 @API(status = API.Status.EXPERIMENTAL)
-public interface SolverRun<T extends Task> {
-    Collection<Solution<T>> perform();
+public interface SolverRun<T extends Task, S extends Solution<T>> {
+    Collection<S> perform();
 }
