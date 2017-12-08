@@ -8,7 +8,6 @@ import java.util.function.Function;
 
 @Value
 @Getter
-//todo: not really public
 public class Domain<V> {
     String name;
     Function<V, List<V>> provider;

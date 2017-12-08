@@ -16,7 +16,6 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-//todo: final?
 public class TraversalBuilder<Params extends Copyable<Params>, ParamsGrade extends Comparable<ParamsGrade>> {
     private Class<Params> paramsClass;
     private Params initialParams;
@@ -43,9 +42,6 @@ public class TraversalBuilder<Params extends Copyable<Params>, ParamsGrade exten
         }
 
         public ParametersDefinitionAndEvaluatorContext evaluator(ParametersEvaluator<Params, ParamsGrade> evaluator){
-            //todo: is this such a good idea?
-            if (model().evaluator != null)
-                throw new IllegalStateException("You can define only one evaluator! Another one already given: "+model().evaluator);
             model().evaluator = evaluator;
             return this;
         }

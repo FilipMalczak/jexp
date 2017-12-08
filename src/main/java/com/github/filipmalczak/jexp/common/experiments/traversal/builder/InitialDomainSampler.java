@@ -2,7 +2,6 @@ package com.github.filipmalczak.jexp.common.experiments.traversal.builder;
 
 import java.util.List;
 
-//todo: move out
 @FunctionalInterface
 public interface InitialDomainSampler<V> {
     V chooseInitialValue(String domainName, List<V> domainValues);
