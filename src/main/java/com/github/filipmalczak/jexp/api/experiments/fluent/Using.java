@@ -9,7 +9,6 @@ import java.lang.annotation.*;
 @Repeatable(Usage.class)
 public @interface Using {
     String executor() default "";
-    String translator() default "";
     String traversal() default "";
 
 }
