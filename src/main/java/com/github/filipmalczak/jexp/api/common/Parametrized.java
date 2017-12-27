@@ -6,4 +6,8 @@ import org.apiguardian.api.API;
 public interface Parametrized<Params extends Copyable<Params>> {
     void setParameters(Params parameters);
     Params getParameters();
+
+    default void setParameters(UnresolvedParameters<Params> unresolvedParameters){
+        setParameters(unresolvedParameters.resolve());
+    }
 }

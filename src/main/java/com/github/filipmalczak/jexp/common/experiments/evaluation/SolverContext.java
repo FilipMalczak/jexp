@@ -25,7 +25,7 @@ public class SolverContext<T extends Task, S extends Solution<T>, D extends Data
     private Function<Collection<V>, V> reduceFunction;
     private ExecutorService executorService = Executors.newCachedThreadPool();
 
-    public <Params extends Copyable<Params>> ParametersEvaluator<Params, V> buildEvaluator(Solver<T, D, Params> solver){
+    public <Params extends Copyable<Params>> ParametersEvaluator<Params, V> buildEvaluator(Solver<T, D, Params, S> solver){
         //todo: move impl up
         return new ParametersEvaluator<Params, V>() {
             @Override

@@ -5,6 +5,9 @@ plugins {
 
 repositories {
     mavenCentral()
+    maven {
+        url 'https://repo.spring.io/libs-release'
+    }
 }
 
 sourceCompatibility = 1.8
@@ -18,8 +21,12 @@ dependencies {
     compile group: 'com.google.auto.service', name: 'auto-service', version: '1.0-rc3'
     compile 'org.apiguardian:apiguardian-api:1.0.0'
 
+    compile 'org.springframework.data:spring-data-jpa:2.0.2.RELEASE'
+
     compile group: 'org.slf4j', name: 'slf4j-api', version: '1.7.25'
 
+    // https://mvnrepository.com/artifact/org.springframework/spring-test
+    testCompile group: 'org.springframework', name: 'spring-test', version: '4.3.13.RELEASE'
     //todo: migrate to JUnit 5
     testCompile 'junit:junit:4.12'
     testCompile group: 'org.codehaus.groovy', name: 'groovy-all', version: '2.4.12'
