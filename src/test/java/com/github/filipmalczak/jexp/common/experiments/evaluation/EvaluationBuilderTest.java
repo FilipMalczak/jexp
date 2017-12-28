@@ -1,27 +1,19 @@
 package com.github.filipmalczak.jexp.common.experiments.evaluation;
 
 import com.github.filipmalczak.jexp.api.common.Copyable;
-import com.github.filipmalczak.jexp.api.experiments.evaluation.SolutionEvaluator;
 import com.github.filipmalczak.jexp.api.solver.Solver;
 import com.github.filipmalczak.jexp.api.solver.SolverRun;
 import com.github.filipmalczak.jexp.api.task.Dataset;
 import com.github.filipmalczak.jexp.api.task.Solution;
 import com.github.filipmalczak.jexp.api.task.Task;
+import com.github.filipmalczak.jexp.common.experiments.evaluation.aspects.EvaluationAspect;
 import com.github.filipmalczak.jexp.spring.experiments.evaluation.SpringJpaAdapter;
-import jdk.nashorn.internal.objects.annotations.Getter;
-import lombok.AllArgsConstructor;
-import lombok.SneakyThrows;
+import lombok.*;
 import lombok.experimental.Accessors;
-import lombok.val;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.springframework.test.context.junit4.SpringRunner;
 
-import javax.xml.crypto.Data;
-
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.List;
+import java.util.*;
+import java.util.function.Supplier;
 
 import static java.util.Arrays.asList;
 import static java.util.stream.Collectors.toList;
@@ -31,6 +23,8 @@ import static org.junit.Assert.*;
 public class EvaluationBuilderTest {
     static class RoundingTask implements Task{}
     @AllArgsConstructor
+    @EqualsAndHashCode
+    @ToString
     static class Params implements Copyable<Params> {
         float x;
         float y;
@@ -41,11 +35,15 @@ public class EvaluationBuilderTest {
         }
     }
     @AllArgsConstructor
+    @EqualsAndHashCode
+    @ToString
     static class SumOfRoundedVals implements Solution<RoundingTask> {
         int sum;
 
     }
     @AllArgsConstructor
+    @EqualsAndHashCode
+    @ToString
     static class SomeMoreVals implements Dataset<RoundingTask> {
         @Accessors List<Float> vals;
 
@@ -97,16 +95,29 @@ public class EvaluationBuilderTest {
 
     private SomeMoreVals dataset = new SomeMoreVals(1.1, 2.2, 3.3, 6.5);
 
+    static class LoggingAspect<T extends Task, P extends Copyable<P>, S extends Solution<T>> implements EvaluationAspect<T, P, S>{
+        public final List<Envelope<P, S>> log = new LinkedList<>();
+
+        @Override
+        public Collection<S> apply(Envelope.Key<P> key, Supplier<Collection<S>> underlyingAspect) {
+            Collection<S> result = underlyingAspect.get();
+            log.add(new Envelope<>(key, result));
+            return result;
+        }
+    }
+
 
     @Test
     @SneakyThrows
     public void testShouldCompile(){
+        LoggingAspect<RoundingTask, Params, SumOfRoundedVals> logging = new LoggingAspect<>();
+
         val builder = EvaluationBuilder.
             over(new Rounder(), dataset).
             gradedWith((SumOfRoundedVals solution) -> solution.sum).
             concurrency().
                 pool(0).
-                    parallelism(4).
+            workStealingPool(4).
             then().
             store().
                 //todo: fill repository
@@ -117,11 +128,19 @@ public class EvaluationBuilderTest {
                     c.stream().mapToInt(i -> i).
                         max().getAsInt()
                 ).
-            then()
-            //todo: some plugin/filter system?
+            then().
+            weaveAspect(logging);
         ;
 //        builder.buildSolutionEvaluator();
-        System.out.println(builder.buildParametersEvaluator().evaluate(new Params(2.2f, 5.3f)).get());
+        System.out.println();
+        Params p = new Params(2.2f, 5.3f);
+        assertEquals(20.0f, (float) builder.buildParametersEvaluator().evaluate(p).get(), 0.01f);
+        assertEquals(
+            asList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9).stream().
+                map(i ->  new Envelope<>(new Envelope.Key<Params>(p, i), asList(new SumOfRoundedVals(20)))).
+                collect(toList()),
+            logging.log
+        );
     }
 
 }

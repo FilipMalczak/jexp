@@ -14,6 +14,6 @@ public interface ParameterSpaceTraverser<Params extends Copyable<Params>> {
     }
 
     default void traverse(TraversalListener<Params>... listeners){
-        traverse(new CompositeListener<>());
+        traverse(new CompositeListener<>(listeners));
     }
 }

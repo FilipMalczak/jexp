@@ -8,18 +8,19 @@ import com.github.filipmalczak.jexp.api.solver.SolverRun;
 import com.github.filipmalczak.jexp.api.task.Dataset;
 import com.github.filipmalczak.jexp.api.task.Solution;
 import com.github.filipmalczak.jexp.api.task.Task;
-import com.github.filipmalczak.jexp.common.experiments.evaluation.filters.EvaluationFilter;
+import com.github.filipmalczak.jexp.common.experiments.evaluation.aspects.CachingAspect;
+import com.github.filipmalczak.jexp.common.experiments.evaluation.aspects.EvaluationAspect;
+import com.github.filipmalczak.jexp.common.utils.FutureUtils;
 import lombok.*;
 
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Function;
-import java.util.stream.Collectors;
+import java.util.function.Supplier;
 import java.util.stream.IntStream;
 
 import static java.util.Arrays.asList;
 import static java.util.stream.Collectors.toList;
-import static java.util.stream.Collectors.toSet;
 
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
@@ -42,8 +43,7 @@ public class EvaluationBuilder<
     private SolutionsRepository<P, S, ? extends Envelope<P, S>> repository;
     private Collection<Integer> iterNumbers = new HashSet<>();
     private Function<Collection<RunV>, ParamsV> reduceFoo;
-    //todo: re-enable filters
-//    private List<EvaluationFilter> filters = new LinkedList<>();
+    private List<EvaluationAspect<T, P, S>> aspects = new LinkedList<>();
 
     public static <T extends Task, D extends Dataset<T>, P extends Copyable<P>, S extends Solution<T>>  OverClosure<T, D, P, S> over(Solver<T, D, P, S> solver, D dataset){
         return new OverClosure<>(solver, dataset);
@@ -75,24 +75,24 @@ public class EvaluationBuilder<
         @AllArgsConstructor
         @NoArgsConstructor
         public class ExecutorClosure {
-            private Function<ExecutorService, EvaluationBuilder> setter;
+            private Function<ExecutorService, EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV>> topBuilderModifier;
 
-            ConcurrencySubBuilder threadFactory(ThreadFactory threadFactory){
-                EvaluationBuilder toReturn = setter.apply(
+            public ConcurrencySubBuilder cachedPool(ThreadFactory threadFactory){
+                EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV> toReturn = topBuilderModifier.apply(
                     Executors.newCachedThreadPool(threadFactory)
                 );
                 return toReturn.concurrency();
             }
 
-            ConcurrencySubBuilder parallelism(int parallelism){
-                EvaluationBuilder toReturn = setter.apply(
+            public ConcurrencySubBuilder workStealingPool(int parallelism){
+                EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV> toReturn = topBuilderModifier.apply(
                     Executors.newWorkStealingPool(parallelism)
                 );
                 return toReturn.concurrency();
             }
 
-            ConcurrencySubBuilder useExecutorService(ExecutorService executorService){
-                EvaluationBuilder toReturn = setter.apply(
+            public ConcurrencySubBuilder useExecutorService(ExecutorService executorService){
+                EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV> toReturn = topBuilderModifier.apply(
                     executorService
                 );
                 return toReturn.concurrency();
@@ -101,7 +101,7 @@ public class EvaluationBuilder<
 
         public ExecutorClosure quick(){
             return new ExecutorClosure((ExecutorService v)  -> {
-                EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV> copied = (EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV>) topBuilder().copy();
+                EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV> copied = topBuilder().copy();
                 copied.quickExecutor = v;
                 return copied;
             });
@@ -109,7 +109,7 @@ public class EvaluationBuilder<
 
         public ExecutorClosure heavy(){
             return new ExecutorClosure((ExecutorService v)  -> {
-                EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV> copied = (EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV>) topBuilder().copy();
+                EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV> copied = topBuilder().copy();
                 copied.heavyExecutor = v;
                 return copied;
             });
@@ -121,7 +121,7 @@ public class EvaluationBuilder<
 
         public ExecutorClosure pool(String name){
             return new ExecutorClosure((ExecutorService v)  -> {
-                EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV> copied = (EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV>) topBuilder().copy();
+                EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV> copied = topBuilder().copy();
                 copied.executors.put(name, v);
                 return copied;
             });
@@ -174,6 +174,12 @@ public class EvaluationBuilder<
         return this;
     }
 
+    public EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV> weaveAspect(EvaluationAspect<T, P, S> aspect) {
+        EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV> out = topBuilder().copy();
+        out.aspects.add(aspect);
+        return out;
+    }
+
     @Override
     public EvaluationBuilder<T, D, P, S, SolutionV, RunV, ParamsV> copy() {
         return new EvaluationBuilder<>(
@@ -186,16 +192,65 @@ public class EvaluationBuilder<
             new HashMap<>(executors),
             repository,
             new ArrayList<>(iterNumbers),
-            reduceFoo//,
-//            new ArrayList<>(filters)
+            reduceFoo,
+            new ArrayList<>(aspects)
         );
+    }
+
+    private boolean isCachingEnabled(){
+        return this.repository != null;
+    }
+
+    private CachingAspect buildCachingAspect(){
+        return new CachingAspect(this.repository);
     }
 
     //todo: only repetitions working; no repository support, nor proper custom pools usage
     public ParametersEvaluator<P, ParamsV> buildParametersEvaluator(){
         return new ParametersEvaluator<P, ParamsV>() {
-            public RunV grade(SolverRun<T, S> run){
-                Collection<S> solutions = run.perform();
+            /**
+             * Prepares list of aspect in useful order. Inject fallback aspect and optional caching aspect, ans return
+             * all aspects starting from latest weaved in and ending in fallback one.
+             * @param run experiment run to be used as fallback aspect
+             * @return list of aspects, from the one that should be woven over all others, to the fallback one
+             */
+            private List<EvaluationAspect<T, P, S>> prepareAspects(SolverRun<T, S> run){
+                int expectedAspects = aspects.size()+1; //custom aspects + fallback to run.perform
+                if (isCachingEnabled())
+                    expectedAspects += 1;
+                List<EvaluationAspect<T, P, S>> list = new ArrayList<>(expectedAspects);
+                list.add((k, thisIsGonnaBeNull) -> run.perform());
+                if (isCachingEnabled())
+                    list.add(buildCachingAspect());
+                list.addAll(aspects);
+                Collections.reverse(list);
+                return list;
+            }
+
+            private Supplier<Collection<S>> getAspectChain(Envelope.Key<P> key, Iterator<EvaluationAspect<T, P, S>> aspectIterator){
+                if (aspectIterator.hasNext()) {
+                    EvaluationAspect<T, P, S> aspect = aspectIterator.next();
+                    System.out.println("applying aspect "+aspect);
+                    return () -> aspect.apply(key, () -> getAspectChain(key, aspectIterator).get());
+                } else {
+//                    throw new RuntimeException("This shouldn't happen! There should be fallback aspect that performs the run!");
+                    return null;
+                }
+            }
+
+            public Collection<S> performWithAspects(Envelope.Key<P> key, SolverRun<T, S> run){
+                List<EvaluationAspect<T, P, S>> aspects = prepareAspects(run);
+                if (aspects.size() == 1)
+                    return run.perform();
+                Iterator<EvaluationAspect<T, P, S>> aspectIterator = aspects.iterator();
+                EvaluationAspect<T, P, S> rootAspects = aspectIterator.next();
+                Supplier<Collection<S>> aspectChain = getAspectChain(key, aspectIterator);
+                return rootAspects.apply(key, aspectChain);
+            }
+
+            public RunV grade(P parameters, int iterNo, SolverRun<T, S> run){
+                Envelope.Key<P> key = new Envelope.Key<>(parameters, iterNo);
+                Collection<S> solutions = performWithAspects(key, run);
                 if (solutions.size() < 1)
                     throw new IllegalArgumentException("Run didn't return any solutions!");
                 return runEvaluatorReduce.apply(run.perform().stream().map(solutionEvaluator::evaluate).collect(toList()));
@@ -214,18 +269,10 @@ public class EvaluationBuilder<
                         map(
                             idx ->
                                 heavyExecutor.submit(() ->
-                                    this.grade(solver.buildRun(dataset))
+                                    this.grade(parameters, idx, solver.buildRun(dataset))
                                 )
                         ).
-                        map((f) -> {
-                            try {
-                                return f.get();
-                            } catch (InterruptedException e) {
-                                throw new RuntimeException(e);
-                            } catch (ExecutionException e) {
-                                throw new RuntimeException(e);
-                            }
-                        }).
+                        map(FutureUtils::safeGet).
                         collect(toList())
                 );
             }
